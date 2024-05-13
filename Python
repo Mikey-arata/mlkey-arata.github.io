@@ -1,0 +1,47 @@
+import os
+from urllib.parse import urlparse, parse_qs
+from googleapiclient.discovery import build
+from pytube import YouTube
+from dotenv import load_dotenv
+from flask import Flask, request, render_template
+
+def get_video_id(url):
+    query = urlparse(url).query
+    return parse_qs(query).get('v', [None])[0]
+
+load_dotenv()
+API_KEY = os.environ.get('YOUTUBE_API_KEY')
+
+def get_download_url(video_id):
+    youtube = build('youtube', 'v3', developerKey=API_KEY)
+    video = youtube.videos().list(part='snippet', id=video_id).execute()
+    title = video['items'][0]['snippet']['title']
+    formats = youtube.videos().list(part='recordingDetails', id=video_id).execute()['items'][0]['recordingDetails']['recordingDetails']
+    best_format = max([f for f in formats if f.get('qualityFeature') == 'HDR'], key=lambda f: f['heightPixels'])
+    return f"https://www.youtube.com/watch?v={video_id}&title={title}", best_format['containerDetails']['containerType']
+
+app = Flask(__name__)
+
+@app.route('/', methods=['GET', 'POST'])
+def home():
+    if request.method == 'POST':
+        urls = request.form.get('urls').split()
+        for url in urls:
+            video_id = get_video_id(url)
+            try:
+                download_url, fmt = get_download_url(video_id)
+            except Exception as e:
+                print(f'エラー: {e}')
+                continue
+            try:
+                yt = YouTube(download_url)
+                stream = yt.streams.filter(file_extension=fmt).get_highest_resolution()
+                stream.download()
+                print(f"{yt.title}のダウンロードが完了しました!ね!")
+            except Exception as e:
+                print(f'エラー: {e}')
+        return 'ダウンロード完了!!'
+    return render_template('index.html')
+
+if __name__ == '__main__':
+    app.run(debug=True)
